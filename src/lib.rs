@@ -5,4 +5,5 @@
 //! parsers and the higher interfaces are written with efficiency in mind, doing minimal copying of
 //! data. There is no heap allocation.
 
+//pub mod arm64;
 pub mod x86_64;

@@ -2,7 +2,9 @@
 //!
 //! The high-level API is accessed through `FunctionTableEntries::unwind_frame`. This function
 //! allows you to unwind a frame to get the return address and all updated contextual registers.
+
 use std::mem::MaybeUninit;
+use std::ops::ControlFlow;
 use thiserror::Error;
 use zerocopy::{FromBytes, LayoutVerified as LV, LE};
 
@@ -120,7 +122,9 @@ impl<'a> FunctionTableEntries<'a> {
                     .unwind_operations()
                     .skip_while(|(o, _)| !is_chained && *o as u32 > offset)
                 {
-                    unwind_info.resolve_operation(state, &op)?;
+                    if let ControlFlow::Break(rip) = unwind_info.resolve_operation(state, &op)? {
+                        return Some(rip);
+                    }
                 }
                 if let Some(UnwindInfoTrailer::ChainedUnwindInfo { chained }) =
                     unwind_info.trailer()
@@ -354,7 +358,7 @@ impl UnwindInfoHeader {
         &self,
         state: &mut S,
         op: &UnwindOperation,
-    ) -> Option<()> {
+    ) -> Option<ControlFlow<u64>> {
         match op {
             UnwindOperation::PopNonVolatile(reg) => {
                 let rsp = state.read_register(Register::RSP);
@@ -386,12 +390,15 @@ impl UnwindInfoHeader {
             }
             UnwindOperation::PopMachineFrame { error_code } => {
                 let offset = if *error_code { 8 } else { 0 };
-                let rsp = state.read_stack(offset + 24)?;
+                let rsp = state.read_register(Register::RSP);
+                let return_address = state.read_stack(rsp + offset)?;
+                let rsp = state.read_stack(rsp + offset + 24)?;
                 state.write_register(Register::RSP, rsp);
+                return Some(ControlFlow::Break(return_address));
             }
         }
 
-        Some(())
+        Some(ControlFlow::Continue(()))
     }
 }
 
