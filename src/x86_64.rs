@@ -60,35 +60,30 @@ impl<'a> FunctionTableEntries<'a> {
         }
     }
 
-    /// Unwind a single frame at the given relative virtual address.
-    ///
-    /// This does not attempt to invoke any exception or termination handlers.
-    ///
-    /// Returns `None` if `UnwindInfo` could not be parsed, a stack value could not be read, or a
-    /// memory offset in the binary could not be read (whether when parsing the section table or
-    /// when reading memory pointed to by the section table).
-    pub fn unwind_frame<S: UnwindState>(
+    pub fn unwind_frame<'m, S: UnwindState, M>(
         &self,
         state: &mut S,
-        image: &[u8],
+        mut memory_at_rva: M,
         address: u32,
-    ) -> Option<u64> {
+    ) -> Option<u64>
+    where
+        M: FnMut(u32) -> Option<&'m [u8]> + 'm,
+    {
         // This implements the procedure found
         // [here](https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-170#unwind-procedure).
         if let Some(mut function) = self.lookup(address) {
             let offset = address - function.begin_address.get();
             let mut is_chained = false;
-            let sections = Sections::parse(image)?;
             loop {
                 let unwind_info =
-                    UnwindInfo::parse(sections.memory_at_rva(function.unwind_info_address.get())?)?;
+                    UnwindInfo::parse(memory_at_rva(function.unwind_info_address.get())?)?;
 
                 if !is_chained {
                     // Check whether the address is in the function epilog. If so, we need to
                     // simulate the remaining epilog instructions (unwind codes don't account for
                     // unwinding from the epilog).
                     let bytes = (function.end_address.get() - address) as usize;
-                    let instruction = &sections.memory_at_rva(address)?[..bytes];
+                    let instruction = &memory_at_rva(address)?[..bytes];
                     let mut epilog_parser = FunctionEpilogParser::new();
                     if let Some(epilog_instructions) =
                         epilog_parser.is_function_epilog(instruction, unwind_info.frame_register())
@@ -140,6 +135,23 @@ impl<'a> FunctionTableEntries<'a> {
         let rip = state.read_stack(rsp)?;
         state.write_register(Register::RSP, rsp + 8);
         Some(rip)
+    }
+
+    /// Unwind a single frame at the given relative virtual address.
+    ///
+    /// This does not attempt to invoke any exception or termination handlers.
+    ///
+    /// Returns `None` if `UnwindInfo` could not be parsed, a stack value could not be read, or a
+    /// memory offset in the binary could not be read (whether when parsing the section table or
+    /// when reading memory pointed to by the section table).
+    pub fn unwind_frame_with_image<S: UnwindState>(
+        &self,
+        state: &mut S,
+        image: &[u8],
+        address: u32,
+    ) -> Option<u64> {
+        let sections = Sections::parse(image)?;
+        self.unwind_frame(state, |addr| sections.memory_at_rva(addr), address)
     }
 }
 
@@ -354,6 +366,8 @@ impl UnwindInfoHeader {
     }
 
     /// Perform the given UnwindOperation, changing `state` appropriately.
+    ///
+    /// Returns `None` when reading the stack fails.
     pub fn resolve_operation<S: UnwindState>(
         &self,
         state: &mut S,
@@ -372,15 +386,14 @@ impl UnwindInfoHeader {
             }
             UnwindOperation::RestoreSPFromFP => {
                 if let Some(reg) = self.frame_register() {
-                    state.write_register(
-                        Register::RSP,
-                        state.read_register(reg) - self.frame_register_offset() as u64,
-                    );
+                    let value = state.read_register(reg) - self.frame_register_offset() as u64;
+                    state.write_register(Register::RSP, value);
                 }
             }
             UnwindOperation::ReadNonVolatile(reg, offset) => {
                 let addr = self.resolve_offset(|reg| state.read_register(reg), *offset);
-                state.write_register(*reg, state.read_stack(addr)?);
+                let value = state.read_stack(addr)?;
+                state.write_register(*reg, value);
             }
             UnwindOperation::ReadXMM(reg, offset) => {
                 let addr = self.resolve_offset(|reg| state.read_register(reg), *offset);
@@ -617,9 +630,9 @@ impl FunctionEpilogInstruction {
 /// An interface over state needed for unwinding stack frames.
 pub trait UnwindState {
     /// Return the value of the given register.
-    fn read_register(&self, register: Register) -> u64;
+    fn read_register(&mut self, register: Register) -> u64;
     /// Return the 8-byte value at the given address on the stack, if any.
-    fn read_stack(&self, addr: u64) -> Option<u64>;
+    fn read_stack(&mut self, addr: u64) -> Option<u64>;
     /// Write a new value to the given register, updating the unwind context.
     fn write_register(&mut self, register: Register, value: u64);
     /// Write a new value to the given xmm register, updating the unwind context.
@@ -933,11 +946,11 @@ mod tests {
     }
 
     impl UnwindState for FrameContext {
-        fn read_register(&self, register: Register) -> u64 {
+        fn read_register(&mut self, register: Register) -> u64 {
             self.registers[register as usize]
         }
 
-        fn read_stack(&self, addr: u64) -> Option<u64> {
+        fn read_stack(&mut self, addr: u64) -> Option<u64> {
             if addr > self.stack_base {
                 return None;
             }
@@ -990,7 +1003,7 @@ mod tests {
         let pdata_section = file.section_by_name(".pdata").unwrap();
         let entries = FunctionTableEntries::parse(pdata_section.data().unwrap());
         let ip_offset = (context.ip - FIXTURE_ADDRESS) as u32;
-        let result = entries.unwind_frame(&mut context, get_fixture(), ip_offset);
+        let result = entries.unwind_frame_with_image(&mut context, get_fixture(), ip_offset);
         assert_eq!(result, Some(ra), "mismatched return address");
         assert_eq!(context.changes, changes, "mismatched register changes");
     }
@@ -1003,7 +1016,7 @@ mod tests {
         let mut ip = context.ip;
         for ra in return_addrs {
             let ip_offset = (ip - FIXTURE_ADDRESS) as u32;
-            let result = entries.unwind_frame(&mut context, get_fixture(), ip_offset);
+            let result = entries.unwind_frame_with_image(&mut context, get_fixture(), ip_offset);
             assert_eq!(result, Some(*ra), "mismatched return address");
             ip = ra - 1;
         }
