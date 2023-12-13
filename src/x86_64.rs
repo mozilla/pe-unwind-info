@@ -3,7 +3,7 @@
 //! The high-level API is accessed through `FunctionTableEntries::unwind_frame`. This function
 //! allows you to unwind a frame to get the return address and all updated contextual registers.
 
-use std::mem::MaybeUninit;
+use arrayvec::ArrayVec;
 use std::ops::ControlFlow;
 use thiserror::Error;
 use zerocopy::{FromBytes, LayoutVerified as LV, LE};
@@ -480,13 +480,13 @@ const FUNCTION_EPILOG_LIMIT: usize = 12;
 /// This uses a small statically-sized buffer to store parsed epilog instructions. It is trivial to
 /// create new instances.
 pub struct FunctionEpilogParser {
-    buffer: [MaybeUninit<FunctionEpilogInstruction>; FUNCTION_EPILOG_LIMIT],
+    buffer: ArrayVec<FunctionEpilogInstruction, FUNCTION_EPILOG_LIMIT>,
 }
 
 impl Default for FunctionEpilogParser {
     fn default() -> Self {
         FunctionEpilogParser {
-            buffer: [MaybeUninit::uninit(); FUNCTION_EPILOG_LIMIT],
+            buffer: ArrayVec::new(),
         }
     }
 }
@@ -507,32 +507,23 @@ impl FunctionEpilogParser {
     /// [Epilogs]: https://learn.microsoft.com/en-us/cpp/build/prolog-and-epilog?view=msvc-170#epilog-code
     pub fn is_function_epilog(
         &mut self,
-        mut ip: &[u8],
+        ip: &[u8],
         frame_register: Option<Register>,
     ) -> Option<&[FunctionEpilogInstruction]> {
-        // The self.buffer.len()'th value should be parsed (it may return Ok(None)).
-        for i in 0..=self.buffer.len() {
-            match FunctionEpilogInstruction::parse(ip, frame_register, i == 0) {
-                Ok(Some((instruction, rest))) if i < self.buffer.len() => {
-                    self.buffer[i].write(instruction);
-                    ip = rest;
-                }
-                Ok(None) => {
-                    return Some(
-                        // # Safety
-                        // We've properly initialized the previous `i` elements.
-                        unsafe {
-                            std::mem::transmute::<
-                                &[MaybeUninit<FunctionEpilogInstruction>],
-                                &[FunctionEpilogInstruction],
-                            >(&self.buffer[0..i])
-                        },
-                    );
-                }
-                _ => return None,
-            }
+        self.buffer.clear();
+        let mut instruction_and_rest =
+            FunctionEpilogInstruction::parse(ip, frame_register, true).ok()?;
+
+        while let Some((instruction, rest)) = instruction_and_rest {
+            // Add the instruction to the buffer. If there are more than FUNCTION_EPILOG_LIMIT
+            // instructions, we will exceed the fixed capacity and the try_push will fail.
+            self.buffer.try_push(instruction).ok()?;
+
+            instruction_and_rest =
+                FunctionEpilogInstruction::parse(rest, frame_register, false).ok()?
         }
-        None
+
+        Some(&self.buffer)
     }
 }
 
