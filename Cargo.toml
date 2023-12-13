@@ -15,6 +15,7 @@ exclude = ["/fixture"]
 bitflags = "2"
 thiserror = "1"
 zerocopy = "0.6"
+arrayvec = "0.7"
 
 [dev-dependencies]
 hex-literal = "0.4"
