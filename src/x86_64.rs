@@ -249,6 +249,33 @@ pub enum Register {
     R15,
 }
 
+impl TryFrom<u8> for Register {
+    type Error = ();
+    #[inline(always)]
+    fn try_from(reg: u8) -> Result<Self, ()> {
+        let reg = match reg {
+            0 => Self::RAX,
+            1 => Self::RCX,
+            2 => Self::RDX,
+            3 => Self::RBX,
+            4 => Self::RSP,
+            5 => Self::RBP,
+            6 => Self::RSI,
+            7 => Self::RDI,
+            8 => Self::R8,
+            9 => Self::R9,
+            10 => Self::R10,
+            11 => Self::R11,
+            12 => Self::R12,
+            13 => Self::R13,
+            14 => Self::R14,
+            15 => Self::R15,
+            _ => return Err(()),
+        };
+        Ok(reg)
+    }
+}
+
 /// A 128-bit XMM register.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -269,6 +296,33 @@ pub enum XmmRegister {
     XMM13,
     XMM14,
     XMM15,
+}
+
+impl TryFrom<u8> for XmmRegister {
+    type Error = ();
+    #[inline(always)]
+    fn try_from(reg: u8) -> Result<Self, ()> {
+        let reg = match reg {
+            0 => Self::XMM0,
+            1 => Self::XMM1,
+            2 => Self::XMM2,
+            3 => Self::XMM3,
+            4 => Self::XMM4,
+            5 => Self::XMM5,
+            6 => Self::XMM6,
+            7 => Self::XMM7,
+            8 => Self::XMM8,
+            9 => Self::XMM9,
+            10 => Self::XMM10,
+            11 => Self::XMM11,
+            12 => Self::XMM12,
+            13 => Self::XMM13,
+            14 => Self::XMM14,
+            15 => Self::XMM15,
+            _ => return Err(()),
+        };
+        Ok(reg)
+    }
 }
 
 /// Fixed data at the start of [PE UnwindInfo][unwindinfo].
@@ -342,10 +396,10 @@ impl UnwindInfoHeader {
     /// The frame register, if any.
     pub fn frame_register(&self) -> Option<Register> {
         let reg = self.frame_register_raw();
-        debug_assert!(reg <= Register::R15 as u8);
-        // # Safety
-        // `reg` is guaranteed to be in the range 0-15, which are all defined values of `Register`.
-        (reg != 0).then_some(unsafe { std::mem::transmute(reg) })
+        (reg != 0).then_some(
+            reg.try_into()
+                .expect("reg is <= 15 so this always succeeds"),
+        )
     }
 
     /// The scaled frame register offset.
@@ -574,13 +628,12 @@ impl FunctionEpilogInstruction {
         // pop r/m64
         if ip.len() >= 2 && ip[0] == 0x8f && ip[1] & 0xf8 == 0xc0 {
             let reg = ip[1] & 0x7 | ((rex & 1) << 3);
-            debug_assert!(reg <= 15);
             return Ok(Some((
-                FunctionEpilogInstruction::Pop(unsafe {
-                    // # Safety
-                    // `reg` is between 0 and 15, which are defined values of `Register`.
-                    std::mem::transmute::<u8, Register>(reg)
-                }),
+                FunctionEpilogInstruction::Pop(
+                    reg.try_into().expect(
+                        "`reg` is between 0 and 15, which are defined values of `Register`.",
+                    ),
+                ),
                 &ip[2..],
             )));
         }
@@ -589,11 +642,11 @@ impl FunctionEpilogInstruction {
             let reg = ip[0] & 0x7 | ((rex & 1) << 3);
             debug_assert!(reg <= 15);
             return Ok(Some((
-                FunctionEpilogInstruction::Pop(unsafe {
-                    // # Safety
-                    // `reg` is between 0 and 7, which are defined values of `Register`.
-                    std::mem::transmute::<u8, Register>(reg)
-                }),
+                FunctionEpilogInstruction::Pop(
+                    reg.try_into().expect(
+                        "`reg` is between 0 and 15, which are defined values of `Register`.",
+                    ),
+                ),
                 &ip[1..],
             )));
         }
@@ -876,22 +929,18 @@ impl UnwindCode {
     #[inline]
     fn operation_info_as_register(&self) -> Register {
         let op_info = self.operation_info();
-        debug_assert!(op_info <= Register::R15 as u8);
-        // # Safety
-        // `op_info` is guaranteed to be in the range 0-15, which are all defined values of
-        // `Register`.
-        unsafe { std::mem::transmute(op_info) }
+        op_info
+            .try_into()
+            .expect("`op_info` is between 0 and 15, which are defined values of `Register`.")
     }
 
     /// Interpret the operation info as an Xmm register.
     #[inline]
     fn operation_info_as_xmm(&self) -> XmmRegister {
         let op_info = self.operation_info();
-        debug_assert!(op_info <= XmmRegister::XMM15 as u8);
-        // # Safety
-        // `op_info` is guaranteed to be in the range 0-15, which are all defined values of
-        // `XmmRegister`.
-        unsafe { std::mem::transmute(op_info) }
+        op_info
+            .try_into()
+            .expect("`op_info` is between 0 and 15, which are defined values of `XmmRegister`.")
     }
 }
 
