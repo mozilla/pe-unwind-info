@@ -84,10 +84,10 @@ impl<'a> FunctionTableEntries<'a> {
                     // unwinding from the epilog).
                     let bytes = (function.end_address.get() - address) as usize;
                     let instruction = &memory_at_rva(address)?[..bytes];
-                    let mut epilog_parser = FunctionEpilogParser::new();
-                    if let Some(epilog_instructions) =
-                        epilog_parser.is_function_epilog(instruction, unwind_info.frame_register())
-                    {
+                    if let Ok(epilog_instructions) = FunctionEpilogInstruction::parse_sequence(
+                        instruction,
+                        unwind_info.frame_register(),
+                    ) {
                         for instruction in epilog_instructions.iter() {
                             match instruction {
                                 FunctionEpilogInstruction::AddSP(offset) => {
@@ -469,64 +469,6 @@ impl UnwindInfoHeader {
     }
 }
 
-/// The maximum number of instructions to allow when parsing a function epilog.
-///
-/// There is at most one AddSP/AddSPFromFP, and only 8 caller-saved registers (disregarding the
-/// implicit RSP). We give a bit of buffer just in case, but it shouldn't be necessary.
-const FUNCTION_EPILOG_LIMIT: usize = 12;
-
-/// A parser (and detector) for microsoft x64 function epilogs.
-///
-/// This uses a small statically-sized buffer to store parsed epilog instructions. It is trivial to
-/// create new instances.
-pub struct FunctionEpilogParser {
-    buffer: ArrayVec<FunctionEpilogInstruction, FUNCTION_EPILOG_LIMIT>,
-}
-
-impl Default for FunctionEpilogParser {
-    fn default() -> Self {
-        FunctionEpilogParser {
-            buffer: ArrayVec::new(),
-        }
-    }
-}
-
-impl FunctionEpilogParser {
-    /// Create a new parser.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Check whether a series of instructions are a tail of a function epilog.
-    ///
-    /// [Epilogs][] look like:
-    /// * `add RSP,<constant>` or `lea RSP,constant[FPReg]`
-    /// * zero or more `pop <GPREG>`
-    /// * `ret` or `jmp` with a ModRM argument with mod field 00
-    ///
-    /// [Epilogs]: https://learn.microsoft.com/en-us/cpp/build/prolog-and-epilog?view=msvc-170#epilog-code
-    pub fn is_function_epilog(
-        &mut self,
-        ip: &[u8],
-        frame_register: Option<Register>,
-    ) -> Option<&[FunctionEpilogInstruction]> {
-        self.buffer.clear();
-        let mut instruction_and_rest =
-            FunctionEpilogInstruction::parse(ip, frame_register, true).ok()?;
-
-        while let Some((instruction, rest)) = instruction_and_rest {
-            // Add the instruction to the buffer. If there are more than FUNCTION_EPILOG_LIMIT
-            // instructions, we will exceed the fixed capacity and the try_push will fail.
-            self.buffer.try_push(instruction).ok()?;
-
-            instruction_and_rest =
-                FunctionEpilogInstruction::parse(rest, frame_register, false).ok()?
-        }
-
-        Some(&self.buffer)
-    }
-}
-
 /// A virtual instruction in the function epilog, interpreted from x86_64 instructions.
 #[derive(Debug, Clone, Copy)]
 pub enum FunctionEpilogInstruction {
@@ -545,7 +487,15 @@ pub enum InstructionParseError {
     NotEnoughData,
     #[error("invalid instruction found")]
     InvalidInstruction,
+    #[error("too many instructions for epilog")]
+    TooManyInstructions,
 }
+
+/// The maximum number of instructions to allow when parsing a function epilog.
+///
+/// There is at most one AddSP/AddSPFromFP, and only 8 caller-saved registers (disregarding the
+/// implicit RSP). We give a bit of extra space just in case, but it shouldn't be necessary.
+pub const FUNCTION_EPILOG_LIMIT: usize = 12;
 
 impl FunctionEpilogInstruction {
     /// Parse a function epilog instruction.
@@ -668,6 +618,39 @@ impl FunctionEpilogInstruction {
 
         // not a valid epilog instruction
         Err(InstructionParseError::InvalidInstruction)
+    }
+
+    /// Check whether a series of instructions are a tail of a function epilog
+    /// and parse them into a limited sequence of epilog instructions.
+    ///
+    /// This function does not allocate memory; the result is stored in a
+    /// fixed-capacity `ArrayVec`.
+    ///
+    /// Returns `Err` if too many instructions were encountered or if the
+    /// instructions do not appear to be a function epilog.
+    ///
+    /// [Epilogs][] look like:
+    /// * `add RSP,<constant>` or `lea RSP,constant[FPReg]`
+    /// * zero or more `pop <GPREG>`
+    /// * `ret` or `jmp` with a ModRM argument with mod field 00
+    ///
+    /// [Epilogs]: https://learn.microsoft.com/en-us/cpp/build/prolog-and-epilog?view=msvc-170#epilog-code
+    pub fn parse_sequence(
+        ip: &[u8],
+        frame_register: Option<Register>,
+    ) -> Result<ArrayVec<Self, FUNCTION_EPILOG_LIMIT>, InstructionParseError> {
+        let mut buffer = ArrayVec::new();
+        let mut instruction_and_rest = Self::parse(ip, frame_register, true)?;
+
+        while let Some((instruction, rest)) = instruction_and_rest {
+            buffer
+                .try_push(instruction)
+                .map_err(|_| InstructionParseError::TooManyInstructions)?;
+
+            instruction_and_rest = Self::parse(rest, frame_register, false)?
+        }
+
+        Ok(buffer)
     }
 }
 
