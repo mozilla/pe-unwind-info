@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+* Update zerocopy to 0.7.32.
+
 ## [0.1.1] - 2023-12-14
 * Remove unsafe code ([#1](https://github.com/afranchuk/pe-unwind-info/pull/1))
 
