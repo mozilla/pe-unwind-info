@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+* Separate `zerocopy-derive` and `zerocopy` to improve build times. Add `zerocopy::Unaligned` to
+  types.
 
 ## [0.2.0] - 2024-01-18
 * Update zerocopy to 0.7.32.
