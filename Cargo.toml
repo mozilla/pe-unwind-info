@@ -1,6 +1,6 @@
 [package]
 name = "pe-unwind-info"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Alex Franchuk <alex.franchuk@gmail.com>"]
 edition = "2021"
 keywords = ["unwind", "pe", "microsoft", "x86_64", "x64"]
