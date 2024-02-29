@@ -743,8 +743,9 @@ impl<'a> UnwindInfo<'a> {
                 handler_data,
             })
         } else if flags.contains(UnwindInfoFlags::CHAININFO) {
+            let (chained, _) = Ref::<_, RuntimeFunction>::new_unaligned_from_prefix(self.rest)?;
             Some(UnwindInfoTrailer::ChainedUnwindInfo {
-                chained: Ref::<_, RuntimeFunction>::new_unaligned(self.rest)?.into_ref(),
+                chained: chained.into_ref(),
             })
         } else {
             None
