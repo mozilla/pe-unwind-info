@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+* Chained unwind info was not correctly parsed, and is now fixed. Thanks @ishitatsuyuki!
 
 ## [0.2.1] - 2024-01-18
 * Separate `zerocopy-derive` and `zerocopy` to improve build times. Add `zerocopy::Unaligned` to
