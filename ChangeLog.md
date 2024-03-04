@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.2.3] - 2024-03-04
 * Fix the scaling of 32-bit large allocation unwind operations. Thanks @ishitatsuyuki!
 
 ## [0.2.2] - 2024-02-29
@@ -19,7 +21,8 @@
 ## [0.1.0] - 2023-07-25
 * Initial release.
 
-[Unreleased]: https://github.com/afranchuk/pe-unwind-info/compare/0.2.2...HEAD
+[Unreleased]: https://github.com/afranchuk/pe-unwind-info/compare/0.2.3...HEAD
+[0.2.3]: https://github.com/afranchuk/pe-unwind-info/compare/0.2.2...0.2.3
 [0.2.2]: https://github.com/afranchuk/pe-unwind-info/compare/0.2.1...0.2.2
 [0.2.1]: https://github.com/afranchuk/pe-unwind-info/compare/0.2.0...0.2.1
 [0.2.0]: https://github.com/afranchuk/pe-unwind-info/compare/0.1.1...0.2.0
