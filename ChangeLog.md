@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+* Fix the scaling of 32-bit large allocation unwind operations. Thanks @ishitatsuyuki!
 
 ## [0.2.2] - 2024-02-29
 * Chained unwind info was not correctly parsed, and is now fixed. Thanks @ishitatsuyuki!

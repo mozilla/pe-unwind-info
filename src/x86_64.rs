@@ -793,7 +793,7 @@ impl<'a> Iterator for UnwindOperations<'a> {
             }
             UnwindOperationCode::AllocLarge => match unwind_code.operation_info() {
                 0 => UnwindOperation::UnStackAlloc(self.read::<U16>()?.get() as u32 * 8),
-                1 => UnwindOperation::UnStackAlloc(self.read::<U32>()?.get() * 8),
+                1 => UnwindOperation::UnStackAlloc(self.read::<U32>()?.get()),
                 _ => return None,
             },
             UnwindOperationCode::AllocSmall => {
