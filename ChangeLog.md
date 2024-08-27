@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.3.0] - 2024-08-27
 * Update zerocopy and fix breaking conflicts when zerocopy has the `derive` feature enabled. Thanks
   @da2ce7!
 
@@ -23,7 +25,8 @@
 ## [0.1.0] - 2023-07-25
 * Initial release.
 
-[Unreleased]: https://github.com/mozilla/pe-unwind-info/compare/0.2.3...HEAD
+[Unreleased]: https://github.com/mozilla/pe-unwind-info/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/mozilla/pe-unwind-info/compare/0.2.3...0.3.0
 [0.2.3]: https://github.com/mozilla/pe-unwind-info/compare/0.2.2...0.2.3
 [0.2.2]: https://github.com/mozilla/pe-unwind-info/compare/0.2.1...0.2.2
 [0.2.1]: https://github.com/mozilla/pe-unwind-info/compare/0.2.0...0.2.1
