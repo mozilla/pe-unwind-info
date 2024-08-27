@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+* Update zerocopy and fix breaking conflicts when zerocopy has the `derive` feature enabled. Thanks
+  @da2ce7!
 
 ## [0.2.3] - 2024-03-04
 * Fix the scaling of 32-bit large allocation unwind operations. Thanks @ishitatsuyuki!
