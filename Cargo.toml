@@ -14,8 +14,8 @@ exclude = ["/fixture"]
 [dependencies]
 bitflags = "2"
 thiserror = "2"
-zerocopy = "0.7.35"
-zerocopy-derive = "0.7.35"
+zerocopy = "0.8"
+zerocopy-derive = "0.8"
 arrayvec = "0.7"
 
 [dev-dependencies]

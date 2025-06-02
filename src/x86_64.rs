@@ -6,12 +6,13 @@
 use arrayvec::ArrayVec;
 use std::ops::ControlFlow;
 use thiserror::Error;
-use zerocopy_derive::{FromBytes, FromZeroes, Unaligned};
+use zerocopy::{FromBytes, Immutable, KnownLayout, Ref, LE};
+use zerocopy_derive::*;
 
-type U16 = zerocopy::U16<zerocopy::LE>;
+type U16 = zerocopy::U16<LE>;
 
 /// Little-endian u32.
-pub type U32 = zerocopy::U32<zerocopy::LE>;
+pub type U32 = zerocopy::U32<LE>;
 
 /// A view over function table entries in the `.pdata` section.
 #[derive(Debug, Clone, Copy)]
@@ -20,7 +21,7 @@ pub struct FunctionTableEntries<'a> {
 }
 
 /// A runtime function record in the function table.
-#[derive(Unaligned, FromZeroes, FromBytes, Debug, Clone, Copy)]
+#[derive(Unaligned, FromBytes, KnownLayout, Immutable, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct RuntimeFunction {
     /// The start relative virtual address of the function.
@@ -45,7 +46,7 @@ impl<'a> FunctionTableEntries<'a> {
     /// Get the `RuntimeFunction`s in the function table, if the parsed data is well-aligned and
     /// sized.
     pub fn functions(&self) -> Option<&'a [RuntimeFunction]> {
-        zerocopy::Ref::new_slice_unaligned(self.data).map(|lv| lv.into_slice())
+        Ref::from_bytes(self.data).ok().map(Ref::into_ref)
     }
 
     /// Lookup the runtime function that contains the given relative virtual address.
@@ -159,9 +160,9 @@ impl<'a> Iterator for FunctionTableEntries<'a> {
     type Item = &'a RuntimeFunction;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (rf, rest) = zerocopy::Ref::<_, RuntimeFunction>::new_unaligned_from_prefix(self.data)?;
+        let (rf, rest) = Ref::<_, RuntimeFunction>::from_prefix(self.data).ok()?;
         self.data = rest;
-        Some(rf.into_ref())
+        Some(Ref::into_ref(rf))
     }
 }
 
@@ -173,21 +174,24 @@ struct Sections<'a> {
 
 impl<'a> Sections<'a> {
     pub fn parse(image: &'a [u8]) -> Option<Self> {
-        let sig_offset =
-            zerocopy::Ref::<_, U32>::new_unaligned(image.get(0x3c..0x40)?)?.get() as usize;
+        let sig_offset = Ref::<_, U32>::from_bytes(image.get(0x3c..0x40)?)
+            .ok()?
+            .get() as usize;
         // Offset to the COFF header
         let coff_image = image.get(sig_offset + 4..)?;
-        let section_count =
-            zerocopy::Ref::<_, U16>::new_unaligned(coff_image.get(2..4)?)?.get() as usize;
-        let size_of_optional_header =
-            zerocopy::Ref::<_, U16>::new_unaligned(coff_image.get(16..18)?)?.get() as usize;
-        let sections = zerocopy::Ref::<_, [Section]>::new_slice_unaligned_from_prefix(
-            &coff_image[20 + size_of_optional_header..],
+        let section_count = Ref::<_, U16>::from_bytes(coff_image.get(2..4)?).ok()?.get() as usize;
+        let size_of_optional_header = Ref::<_, U16>::from_bytes(coff_image.get(16..18)?)
+            .ok()?
+            .get() as usize;
+        let (sections, _rest) = Ref::from_prefix_with_elems(
+            coff_image.get(20 + size_of_optional_header..)?,
             section_count,
-        )?
-        .0
-        .into_slice();
-        Some(Sections { image, sections })
+        )
+        .ok()?;
+        Some(Sections {
+            image,
+            sections: Ref::into_ref(sections),
+        })
     }
 
     pub fn memory_at_rva(&self, rva: u32) -> Option<&'a [u8]> {
@@ -213,7 +217,7 @@ impl<'a> Sections<'a> {
     }
 }
 
-#[derive(Unaligned, FromZeroes, FromBytes, Debug, Clone, Copy)]
+#[derive(Unaligned, FromBytes, KnownLayout, Immutable, Debug, Clone, Copy)]
 #[repr(C)]
 struct Section {
     _name: [u8; 8],
@@ -332,7 +336,7 @@ impl TryFrom<u8> for XmmRegister {
 /// Fixed data at the start of [PE UnwindInfo][unwindinfo].
 ///
 /// [unwindinfo]: https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-170#struct-unwind_info
-#[derive(Unaligned, FromZeroes, FromBytes, Debug, Clone, Copy)]
+#[derive(Unaligned, FromBytes, KnownLayout, Immutable, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct UnwindInfoHeader {
     /// The unwind information version and flags.
@@ -527,8 +531,8 @@ impl FunctionEpilogInstruction {
         if allow_add_sp && ip.len() >= 3 {
             // add RSP,imm32
             if rex & 0x8 != 0 && ip[0] == 0x81 && ip[1] == 0xc4 {
-                let (val, rest) = zerocopy::Ref::<_, U32>::new_unaligned_from_prefix(&ip[2..])
-                    .ok_or(InstructionParseError::NotEnoughData)?;
+                let (val, rest) = Ref::<_, U32>::from_prefix(&ip[2..])
+                    .map_err(|_| InstructionParseError::NotEnoughData)?;
                 return Ok(Some((FunctionEpilogInstruction::AddSP(val.get()), rest)));
             }
             // add RSP,imm8
@@ -552,9 +556,8 @@ impl FunctionEpilogInstruction {
                             )));
                         // lea RSP,disp32[FP]
                         } else if op_mod == 0b10 {
-                            let (val, rest) =
-                                zerocopy::Ref::<_, U32>::new_unaligned_from_prefix(&ip[2..])
-                                    .ok_or(InstructionParseError::NotEnoughData)?;
+                            let (val, rest) = Ref::<_, U32>::from_prefix(&ip[2..])
+                                .map_err(|_| InstructionParseError::NotEnoughData)?;
                             return Ok(Some((
                                 FunctionEpilogInstruction::AddSPFromFP(val.get()),
                                 rest,
@@ -709,17 +712,15 @@ impl<'a> UnwindInfo<'a> {
     ///
     /// Returns None if there aren't enough bytes or the alignment is incorrect.
     pub fn parse(data: &'a [u8]) -> Option<Self> {
-        let (header, rest) = zerocopy::Ref::<_, UnwindInfoHeader>::new_unaligned_from_prefix(data)?;
+        let (header, rest) = Ref::<_, UnwindInfoHeader>::from_prefix(data).ok()?;
         if header.version() != 1 {
             return None;
         }
-        let (unwind_codes, rest) = zerocopy::Ref::new_slice_unaligned_from_prefix(
-            rest,
-            header.unwind_codes_len as usize * 2,
-        )?;
+        let (unwind_codes, rest) =
+            Ref::from_prefix_with_elems(rest, header.unwind_codes_len as usize * 2).ok()?;
         Some(UnwindInfo {
-            header: header.into_ref(),
-            unwind_codes: unwind_codes.into_slice(),
+            header: Ref::into_ref(header),
+            unwind_codes: Ref::into_ref(unwind_codes),
             rest,
         })
     }
@@ -733,24 +734,20 @@ impl<'a> UnwindInfo<'a> {
     pub fn trailer(&self) -> Option<UnwindInfoTrailer<'a>> {
         let flags = self.flags();
         if flags.contains(UnwindInfoFlags::EHANDLER) {
-            let (handler_address, handler_data) =
-                zerocopy::Ref::<_, U32>::new_unaligned_from_prefix(self.rest)?;
+            let (handler_address, handler_data) = Ref::<_, U32>::from_prefix(self.rest).ok()?;
             Some(UnwindInfoTrailer::ExceptionHandler {
-                handler_address: handler_address.into_ref(),
+                handler_address: Ref::into_ref(handler_address),
                 handler_data,
             })
         } else if flags.contains(UnwindInfoFlags::UHANDLER) {
-            let (handler_address, handler_data) =
-                zerocopy::Ref::<_, U32>::new_unaligned_from_prefix(self.rest)?;
+            let (handler_address, handler_data) = Ref::<_, U32>::from_prefix(self.rest).ok()?;
             Some(UnwindInfoTrailer::TerminationHandler {
-                handler_address: handler_address.into_ref(),
+                handler_address: Ref::into_ref(handler_address),
                 handler_data,
             })
         } else if flags.contains(UnwindInfoFlags::CHAININFO) {
-            let (chained, _) =
-                zerocopy::Ref::<_, RuntimeFunction>::new_unaligned_from_prefix(self.rest)?;
             Some(UnwindInfoTrailer::ChainedUnwindInfo {
-                chained: chained.into_ref(),
+                chained: Ref::into_ref(Ref::<_, RuntimeFunction>::from_bytes(self.rest).ok()?),
             })
         } else {
             None
@@ -780,10 +777,10 @@ impl<'a> UnwindOperations<'a> {
         c.read::<UnwindCode>()
     }
 
-    fn read<T: zerocopy::Unaligned + zerocopy::FromBytes>(&mut self) -> Option<&'a T> {
-        let (v, rest) = zerocopy::Ref::<_, T>::new_unaligned_from_prefix(self.0)?;
+    fn read<T: FromBytes + KnownLayout + Immutable>(&mut self) -> Option<&'a T> {
+        let (v, rest) = Ref::<_, T>::from_prefix(self.0).ok()?;
         self.0 = rest;
-        Some(v.into_ref())
+        Some(Ref::into_ref(v))
     }
 }
 
@@ -872,7 +869,7 @@ pub enum UnwindOperationCode {
 }
 
 /// A single step to unwind operations done in a frame's prolog.
-#[derive(Unaligned, FromZeroes, FromBytes, Debug, Clone, Copy)]
+#[derive(Unaligned, FromBytes, KnownLayout, Immutable, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct UnwindCode {
     /// The byte offset into the prolog where the operation was done.
