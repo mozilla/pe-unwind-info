@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+* Update zerocopy, thiserror, and dev-dependencies. Thanks @mstange!
 
 ## [0.3.0] - 2024-08-27
 * Update zerocopy and fix breaking conflicts when zerocopy has the `derive` feature enabled. Thanks
