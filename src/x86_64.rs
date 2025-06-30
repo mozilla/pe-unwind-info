@@ -4,7 +4,7 @@
 //! allows you to unwind a frame to get the return address and all updated contextual registers.
 
 use arrayvec::ArrayVec;
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 use thiserror::Error;
 use zerocopy::{FromBytes, Immutable, KnownLayout, Ref, LE};
 use zerocopy_derive::*;
@@ -40,7 +40,7 @@ impl<'a> FunctionTableEntries<'a> {
 
     /// Get the number of `RuntimeFunction` stored in the function table.
     pub fn functions_len(&self) -> usize {
-        self.data.len() / std::mem::size_of::<RuntimeFunction>()
+        self.data.len() / core::mem::size_of::<RuntimeFunction>()
     }
 
     /// Get the `RuntimeFunction`s in the function table, if the parsed data is well-aligned and
@@ -698,8 +698,8 @@ pub struct UnwindInfo<'a> {
     rest: &'a [u8],
 }
 
-impl std::fmt::Debug for UnwindInfo<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Debug for UnwindInfo<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("UnwindInfo")
             .field("header", self.header)
             .field("unwind_codes", &self.unwind_codes)
@@ -755,7 +755,7 @@ impl<'a> UnwindInfo<'a> {
     }
 }
 
-impl std::ops::Deref for UnwindInfo<'_> {
+impl core::ops::Deref for UnwindInfo<'_> {
     type Target = UnwindInfoHeader;
 
     fn deref(&self) -> &Self::Target {
