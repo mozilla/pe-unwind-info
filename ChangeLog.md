@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+* Set the crate as `no_std` (the standard library isn't used at all). Thanks @WolverinDEV!
 
 ## [0.4.0] - 2025-06-09
 * Update zerocopy, thiserror, and dev-dependencies. Thanks @mstange!
