@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.5.0] - 2025-07-02
 * Set the crate as `no_std` (the standard library isn't used at all). Thanks @WolverinDEV!
 
 ## [0.4.0] - 2025-06-09
@@ -29,7 +31,8 @@
 ## [0.1.0] - 2023-07-25
 * Initial release.
 
-[Unreleased]: https://github.com/mozilla/pe-unwind-info/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/mozilla/pe-unwind-info/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/mozilla/pe-unwind-info/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/mozilla/pe-unwind-info/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/mozilla/pe-unwind-info/compare/0.2.3...0.3.0
 [0.2.3]: https://github.com/mozilla/pe-unwind-info/compare/0.2.2...0.2.3
