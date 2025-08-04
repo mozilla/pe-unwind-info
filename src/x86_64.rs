@@ -79,10 +79,15 @@ impl<'a> FunctionTableEntries<'a> {
                 let unwind_info =
                     UnwindInfo::parse(memory_at_rva(function.unwind_info_address.get())?)?;
 
-                if !is_chained {
+                let mut unwind_ops = unwind_info.unwind_operations().peekable();
+
+                if !is_chained
+                    && should_check_for_epilog(address, function.end_address.get(), &mut unwind_ops)
+                {
                     // Check whether the address is in the function epilog. If so, we need to
                     // simulate the remaining epilog instructions (unwind codes don't account for
                     // unwinding from the epilog).
+
                     let bytes = (function.end_address.get() - address) as usize;
                     let instruction = &memory_at_rva(address)?[..bytes];
                     if let Ok(epilog_instructions) = FunctionEpilogInstruction::parse_sequence(
@@ -114,10 +119,7 @@ impl<'a> FunctionTableEntries<'a> {
                     }
                 }
 
-                for (_, op) in unwind_info
-                    .unwind_operations()
-                    .skip_while(|(o, _)| !is_chained && *o as u32 > offset)
-                {
+                for (_, op) in unwind_ops.skip_while(|(o, _)| !is_chained && *o as u32 > offset) {
                     if let ControlFlow::Break(rip) = unwind_info.resolve_operation(state, &op)? {
                         return Some(rip);
                     }
@@ -163,6 +165,69 @@ impl<'a> Iterator for FunctionTableEntries<'a> {
         let (rf, rest) = Ref::<_, RuntimeFunction>::from_prefix(self.data).ok()?;
         self.data = rest;
         Some(Ref::into_ref(rf))
+    }
+}
+
+/// Returns whether we are potentially in a function epilog or not.
+///
+/// This must be called on the unwind operations before any values operations are consumed, since
+/// the epilog operations will be before any others.
+fn should_check_for_epilog(
+    address: u32,
+    function_end_address: u32,
+    unwind_ops: &mut core::iter::Peekable<UnwindOperations<'_>>,
+) -> bool {
+    // Check whether there is epilog offset information in the unwind ops
+    // (added in version 2). All epilog information should be at the head of the
+    // set of operations. If it is present and we can confirm we're not in the
+    // epilog, we can skip trying to parse the instructions.
+    if let Some((_, UnwindOperation::EpilogInformation(info))) = unwind_ops.peek() {
+        struct InEpilog {
+            value: bool,
+            epilog_size: u32,
+            address: u32,
+            function_end: u32,
+        }
+
+        impl InEpilog {
+            fn epilog_at(&mut self, epilog_offset: u32) {
+                let epilog_start = self.function_end - epilog_offset;
+                self.value |=
+                    self.address >= epilog_start && self.address < epilog_start + self.epilog_size;
+            }
+        }
+
+        // Handle the first operation as the header, which provides the epilog size.
+        let header = info.as_header();
+
+        let mut in_epilog = InEpilog {
+            value: false,
+            epilog_size: header.epilog_size() as u32,
+            address,
+            function_end: function_end_address,
+        };
+
+        if header.single_epilog() {
+            in_epilog.epilog_at(header.epilog_size() as u32);
+        }
+        unwind_ops.next();
+
+        // Always consume remaining epilog infos (which will be additional offsets, or padding
+        // entries with 0 offsets).
+        while let Some((_, UnwindOperation::EpilogInformation(info))) = unwind_ops.peek() {
+            // Only continue checking if we don't know we're in an epilog yet.
+            if !in_epilog.value {
+                let epilog_offset = info.as_offset() as u32;
+                if epilog_offset != 0 {
+                    in_epilog.epilog_at(epilog_offset);
+                }
+            }
+            unwind_ops.next();
+        }
+
+        in_epilog.value
+    } else {
+        true
     }
 }
 
@@ -335,7 +400,12 @@ impl TryFrom<u8> for XmmRegister {
 
 /// Fixed data at the start of [PE UnwindInfo][unwindinfo].
 ///
+/// The version 2 details are not documented formally, but they add `UWOP_EPILOG` and
+/// `UWOP_SPARE_CODE` where `UWOP_SAVE_XMM` and `UWOP_SAVE_XMM_FAR` were previously deprecated and
+/// removed. The behavior of `UWOP_EPILOG` was derived from the [coreclr implementation][coreclr].
+///
 /// [unwindinfo]: https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-170#struct-unwind_info
+/// [coreclr]: https://github.com/dotnet/runtime/blob/e11a3d4c0604a2bd1f5b2aee27a32d4a0cbcbac8/src/coreclr/unwinder/amd64/unwinder.cpp
 #[derive(Unaligned, FromBytes, KnownLayout, Immutable, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct UnwindInfoHeader {
@@ -372,7 +442,7 @@ bitflags::bitflags! {
 }
 
 impl UnwindInfoHeader {
-    /// The UnwindInfo version. Should be `1`.
+    /// The UnwindInfo version. Should be `1` or `2`.
     #[inline]
     pub fn version(&self) -> u8 {
         self.version_and_flags & 0x7
@@ -456,6 +526,10 @@ impl UnwindInfoHeader {
                 let addr = self.resolve_offset(|reg| state.read_register(reg), *offset);
                 let value = state.read_stack(addr)?;
                 state.write_register(*reg, value);
+            }
+            UnwindOperation::EpilogInformation(_) => {
+                // These should be fully consumed before this point, but ignore unexpected
+                // operations.
             }
             UnwindOperation::ReadXMM(reg, offset) => {
                 let addr = self.resolve_offset(|reg| state.read_register(reg), *offset);
@@ -713,7 +787,7 @@ impl<'a> UnwindInfo<'a> {
     /// Returns None if there aren't enough bytes or the alignment is incorrect.
     pub fn parse(data: &'a [u8]) -> Option<Self> {
         let (header, rest) = Ref::<_, UnwindInfoHeader>::from_prefix(data).ok()?;
-        if header.version() != 1 {
+        if !(1..=2).contains(&header.version()) {
             return None;
         }
         let (unwind_codes, rest) =
@@ -727,7 +801,10 @@ impl<'a> UnwindInfo<'a> {
 
     /// Get an iterator over the unwind operations.
     pub fn unwind_operations(&self) -> UnwindOperations<'a> {
-        UnwindOperations(self.unwind_codes)
+        UnwindOperations {
+            version: self.header.version(),
+            unwind_codes: self.unwind_codes,
+        }
     }
 
     /// Get the trailing information of the unwind info, if any.
@@ -768,7 +845,10 @@ impl core::ops::Deref for UnwindInfo<'_> {
 /// This iterator parses the operations as it iterates, since it needs to parse them to know how
 /// many slots each takes up.
 #[derive(Clone, Copy, Debug)]
-pub struct UnwindOperations<'a>(&'a [u8]);
+pub struct UnwindOperations<'a> {
+    version: u8,
+    unwind_codes: &'a [u8],
+}
 
 impl<'a> UnwindOperations<'a> {
     /// Get the current `UnwindCode`.
@@ -778,8 +858,8 @@ impl<'a> UnwindOperations<'a> {
     }
 
     fn read<T: FromBytes + KnownLayout + Immutable>(&mut self) -> Option<&'a T> {
-        let (v, rest) = Ref::<_, T>::from_prefix(self.0).ok()?;
-        self.0 = rest;
+        let (v, rest) = Ref::<_, T>::from_prefix(self.unwind_codes).ok()?;
+        self.unwind_codes = rest;
         Some(Ref::into_ref(v))
     }
 }
@@ -789,7 +869,7 @@ impl<'a> Iterator for UnwindOperations<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let unwind_code = self.read::<UnwindCode>()?;
-        let op = match unwind_code.operation_code()? {
+        let op = match unwind_code.operation_code(self.version)? {
             UnwindOperationCode::PushNonvol => {
                 UnwindOperation::PopNonVolatile(unwind_code.operation_info_as_register())
             }
@@ -810,6 +890,19 @@ impl<'a> Iterator for UnwindOperations<'a> {
                 unwind_code.operation_info_as_register(),
                 StackFrameOffset(self.read::<U32>()?.get()),
             ),
+            UnwindOperationCode::Epilog => UnwindOperation::EpilogInformation(EpilogInformation {
+                size_or_offset_low: unwind_code.prolog_offset,
+                single_or_offset_high: unwind_code.operation_code_raw(),
+            }),
+            // We don't expect to ever see a `UWOP_SPARE_CODE` (so much so that other
+            // implementations assert it), but we'll try to keep going anyway.
+            UnwindOperationCode::Spare => {
+                // The spare has an extra 2 16-bit "slots" (to be size-compatible with the
+                // [deprecated] version 1 code, UWOP_SAVE_XMM_FAR).
+                let _ = self.read::<U32>()?;
+                // Skip this operation.
+                return self.next();
+            }
             UnwindOperationCode::SaveXmm128 => UnwindOperation::ReadXMM(
                 unwind_code.operation_info_as_xmm(),
                 StackFrameOffset(self.read::<U16>()?.get() as u32 * 16),
@@ -827,6 +920,39 @@ impl<'a> Iterator for UnwindOperations<'a> {
     }
 }
 
+/// Epilog information must be the first unwind operations in the stream. The first entry gives the
+/// epilog size and indicates whether there is one epilog or many. Subsequent entries give offsets
+/// for other epilogs, if necessary, and there are always a multiple of 2 epilog codes (to match
+/// the 2 slots that the version 1 unwind code used, even though it was deprecated without ever
+/// being used in practice).
+#[derive(Debug, Clone, Copy)]
+pub struct EpilogInformation {
+    size_or_offset_low: u8,
+    single_or_offset_high: u8,
+}
+
+pub struct EpilogHeader<'a>(&'a EpilogInformation);
+
+impl EpilogInformation {
+    pub fn as_header(&self) -> EpilogHeader {
+        EpilogHeader(self)
+    }
+
+    pub fn as_offset(&self) -> u16 {
+        self.size_or_offset_low as u16 + self.single_or_offset_high as u16 * 256
+    }
+}
+
+impl EpilogHeader<'_> {
+    pub fn epilog_size(&self) -> u8 {
+        self.0.size_or_offset_low
+    }
+
+    pub fn single_epilog(&self) -> bool {
+        self.0.single_or_offset_high & 1 != 0
+    }
+}
+
 /// An offset relative to the local stack frame.
 #[derive(Debug, Clone, Copy)]
 pub struct StackFrameOffset(u32);
@@ -837,6 +963,8 @@ pub struct StackFrameOffset(u32);
 /// operation that needs to be done to unwind.
 #[derive(Debug, Clone, Copy)]
 pub enum UnwindOperation {
+    /// Provide information about the function's epilog.
+    EpilogInformation(EpilogInformation),
     /// Restore a register's value by popping from the stack (incrementing RSP by 8).
     PopNonVolatile(Register),
     /// Undo a stack allocation of the given size (incrementing RSP).
@@ -863,7 +991,9 @@ pub enum UnwindOperationCode {
     SetFPReg,
     SaveNonvol,
     SaveNonvolFar,
-    SaveXmm128 = 8,
+    Epilog,
+    Spare,
+    SaveXmm128,
     SaveXmm128Far,
     PushMachframe,
 }
@@ -891,8 +1021,8 @@ impl UnwindCode {
         self.opcode_and_opinfo >> 4
     }
 
-    /// Get the operation code.
-    pub fn operation_code(&self) -> Option<UnwindOperationCode> {
+    /// Get the operation code, given the unwind_info version.
+    pub fn operation_code(&self, unwind_info_version: u8) -> Option<UnwindOperationCode> {
         match self.operation_code_raw() {
             0 => Some(UnwindOperationCode::PushNonvol),
             1 => Some(UnwindOperationCode::AllocLarge),
@@ -900,6 +1030,8 @@ impl UnwindCode {
             3 => Some(UnwindOperationCode::SetFPReg),
             4 => Some(UnwindOperationCode::SaveNonvol),
             5 => Some(UnwindOperationCode::SaveNonvolFar),
+            6 if unwind_info_version >= 2 => Some(UnwindOperationCode::Epilog),
+            7 if unwind_info_version >= 2 => Some(UnwindOperationCode::Spare),
             8 => Some(UnwindOperationCode::SaveXmm128),
             9 => Some(UnwindOperationCode::SaveXmm128Far),
             10 => Some(UnwindOperationCode::PushMachframe),

@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+* Support version 2 `UNWIND_INFO` and `UWOP_EPILOG` opcodes.
 
 ## [0.5.0] - 2025-07-02
 * Set the crate as `no_std` (the standard library isn't used at all). Thanks @WolverinDEV!
