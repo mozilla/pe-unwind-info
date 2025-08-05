@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.0] - 2025-08-05
 * Support version 2 `UNWIND_INFO` and `UWOP_EPILOG` opcodes.
 
 ## [0.5.0] - 2025-07-02
@@ -32,7 +34,8 @@
 ## [0.1.0] - 2023-07-25
 * Initial release.
 
-[Unreleased]: https://github.com/mozilla/pe-unwind-info/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/mozilla/pe-unwind-info/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/mozilla/pe-unwind-info/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/mozilla/pe-unwind-info/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/mozilla/pe-unwind-info/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/mozilla/pe-unwind-info/compare/0.2.3...0.3.0
