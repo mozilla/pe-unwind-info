@@ -823,8 +823,9 @@ impl<'a> UnwindInfo<'a> {
                 handler_data,
             })
         } else if flags.contains(UnwindInfoFlags::CHAININFO) {
+            let (chained, _) = Ref::<_, RuntimeFunction>::from_prefix(self.rest).ok()?;
             Some(UnwindInfoTrailer::ChainedUnwindInfo {
-                chained: Ref::into_ref(Ref::<_, RuntimeFunction>::from_bytes(self.rest).ok()?),
+                chained: Ref::into_ref(chained),
             })
         } else {
             None
@@ -1335,5 +1336,56 @@ mod tests {
                 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
         };
         assert_fixture_frames(context, &[0x7ff725bf104f, 0x7ff725c06f90]);
+    }
+
+    #[test]
+    fn chained_unwind_info_allows_trailing_data() {
+        // UNWIND_INFO v1 with CHAININFO flag set, followed by a 12-byte RuntimeFunction
+        let record = hex!(
+            "21 00 00 00
+            00 10 00 00
+            00 11 00 00
+            00 20 00 00"
+        );
+
+        let read_chained = |data: &[u8]| {
+            let info = UnwindInfo::parse(data).unwrap();
+            let Some(UnwindInfoTrailer::ChainedUnwindInfo { chained }) = info.trailer() else {
+                panic!("missing chained unwind info");
+            };
+
+            (
+                chained.begin_address.get(),
+                chained.end_address.get(),
+                chained.unwind_info_address.get(),
+            )
+        };
+
+        let expected = (0x1000, 0x1100, 0x2000);
+        assert_eq!(read_chained(&record), expected);
+
+        let mut with_trailing_data = record.to_vec();
+        with_trailing_data.push(0xa5);
+
+        assert_eq!(read_chained(&with_trailing_data), expected);
+    }
+
+    #[test]
+    fn chained_unwind_info_rejects_truncated_record() {
+        let record = hex!(
+            "21 00 00 00
+            00 10 00 00
+            00 11 00 00
+            00 20 00 00"
+        );
+
+        // Retain the 4 byte UNWIND_INFO header, truncate the chained RuntimeFunction record
+        for trailer_len in 0..12 {
+            let info = UnwindInfo::parse(&record[..4 + trailer_len]).unwrap();
+            assert!(
+                info.trailer().is_none(),
+                "accepted a chained record with {trailer_len} bytes"
+            );
+        }
     }
 }
