@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+* Fix chained unwind info parsing, which regressed with the zerocopy update. Thanks @jimbomcb!
 
 ## [0.6.0] - 2025-08-05
 * Support version 2 `UNWIND_INFO` and `UWOP_EPILOG` opcodes.
