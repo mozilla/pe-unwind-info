@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.1] - 2026-09-08
 * Fix chained unwind info parsing, which regressed with the zerocopy update. Thanks @jimbomcb!
 
 ## [0.6.0] - 2025-08-05
@@ -35,7 +37,8 @@
 ## [0.1.0] - 2023-07-25
 * Initial release.
 
-[Unreleased]: https://github.com/mozilla/pe-unwind-info/compare/0.6.0...HEAD
+[Unreleased]: https://github.com/mozilla/pe-unwind-info/compare/0.6.1...HEAD
+[0.6.1]: https://github.com/mozilla/pe-unwind-info/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/mozilla/pe-unwind-info/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/mozilla/pe-unwind-info/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/mozilla/pe-unwind-info/compare/0.3.0...0.4.0
