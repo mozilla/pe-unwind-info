@@ -934,7 +934,7 @@ pub struct EpilogInformation {
 pub struct EpilogHeader<'a>(&'a EpilogInformation);
 
 impl EpilogInformation {
-    pub fn as_header(&self) -> EpilogHeader {
+    pub fn as_header(&self) -> EpilogHeader<'_> {
         EpilogHeader(self)
     }
 
